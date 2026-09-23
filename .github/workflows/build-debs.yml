@@ -29,7 +29,7 @@ jobs:
       - name: Install Qt 6.10.2 dev stack
         run: |
           apt-get install -y -qq --no-install-recommends \
-            cmake ninja-build extra-cmake-modules pkg-config patch \
+            build-essential cmake ninja-build extra-cmake-modules pkg-config patch \
             qt6-base-dev qt6-base-dev-tools qt6-base-private-dev \
             qt6-declarative-dev qt6-declarative-dev-tools qt6-declarative-private-dev \
             qt6-5compat-dev libxkbcommon-dev libgl1-mesa-dev
