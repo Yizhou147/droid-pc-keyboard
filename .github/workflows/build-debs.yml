@@ -9,16 +9,30 @@ on:
 jobs:
   deb:
     runs-on: ${{ matrix.os }}
+    container:
+      # Ubuntu 26.04 ships Qt 6.10.2 (+dfsg) — the exact version the deb is
+      # pinned to; no aqtinstall needed.
+      image: ubuntu:26.04
+      options: --user root
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-24.04
-            qt_arch: gcc_64
+            arch: amd64
           - os: ubuntu-24.04-arm
-            qt_arch: linux_gcc_arm64
+            arch: arm64
     steps:
+      - name: Bootstrap container
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates
       - uses: actions/checkout@v4
+      - name: Install Qt 6.10.2 dev stack
+        run: |
+          apt-get install -y -qq --no-install-recommends \
+            cmake ninja-build extra-cmake-modules pkg-config patch \
+            qt6-base-dev qt6-base-dev-tools qt6-base-private-dev \
+            qt6-declarative-dev qt6-declarative-dev-tools qt6-declarative-private-dev \
+            qt6-5compat-dev libxkbcommon-dev libgl1-mesa-dev
       - name: Resolve package version (sanitized tag or snapshot)
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ] && echo "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
@@ -29,25 +43,15 @@ jobs:
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_REF_TYPE: ${{ github.ref_type }}
-      - name: Install build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build python3 libgl1-mesa-dev
-      - name: Install Qt 6.10.2 (aqtinstall)
-        run: |
-          python3 -m pip install --upgrade aqtinstall
-          aqt install-qt linux desktop 6.10.2 "$QT_ARCH" --outputdir "$HOME/Qt"
-        env:
-          QT_ARCH: ${{ matrix.qt_arch }}
       - name: Build all-in-one deb (assets + patched VKB + pinyin)
         env:
-          QT_PREFIX: ${{ format('{0}/Qt/6.10.2/{1}', env.HOME, matrix.qt_arch) }}
+          QT_PREFIX: /usr
         run: |
           chmod +x packaging/*.sh scripts/*.sh
           ./packaging/build-deb.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: droid-pc-keyboard-deb-${{ matrix.qt_arch }}
+          name: droid-pc-keyboard-deb-${{ matrix.arch }}
           path: dist/*.deb
 
   release:
