@@ -46,6 +46,10 @@ install -m755 pc-keyd.py "$PKG/usr/local/bin/pc-keyd.py"
 # overlay the built VKB (mirrors distro paths: usr/lib/<triple>/qt6/qml/...
 # and libQt6VirtualKeyboard.so*)
 cp -a "$BUILD/image"/. "$PKG/"
+# runtime-only: strip dev files the distro keeps in separate -dev packages
+rm -rf "$PKG"/usr/include
+find "$PKG" -type d \( -name cmake -o -name mkspecs -o -name pkgconfig -o -name examples \) -prune -exec rm -rf {} + 2>/dev/null || true
+find "$PKG" -name "*.prl" -delete 2>/dev/null || true
 # never ship Layouts from upstream build (would clobber plasma-keyboard's)
 find "$PKG" -type d -name Layouts -path "*VirtualKeyboard*" -exec rm -rf {} + 2>/dev/null || true
 
@@ -65,8 +69,8 @@ Version: $VERSION
 Architecture: $ARCH
 Maintainer: Yizhou <yizhou@example.invalid>
 Depends: patch
-Replaces: libqt6virtualkeyboard6, qml6-module-qtquick-virtualkeyboard
-Breaks: libqt6virtualkeyboard6, qml6-module-qtquick-virtualkeyboard
+Provides: libqt6virtualkeyboard6, qml6-module-qtquick-virtualkeyboard, qt6-virtualkeyboard-plugin
+Replaces: libqt6virtualkeyboard6, qml6-module-qtquick-virtualkeyboard, qt6-virtualkeyboard-plugin
 Description: Full-size PC layout, pinyin and uinput combo keys for plasma-keyboard
  All-in-one: 6-row PC keyboard page with sticky Ctrl/Alt/Shift and real
  modifier chords via the pc-keyd uinput daemon, Chinese pinyin (Qt VKB
@@ -85,10 +89,10 @@ STYLES_DIR=$(ls -d /usr/lib/*/qt6/qml/QtQuick/VirtualKeyboard/Styles/Breeze 2>/d
 
 install -D -m644 $D/layout/fallback/pc.qml $LK/fallback/pc.qml
 
-if ! grep -q droid-pc-keyboard $LK/fallback/main.qml 2>/dev/null; then
+if ! grep -q "Qt.Key_F13" $LK/fallback/main.qml 2>/dev/null; then
     [ -e $LK/fallback/main.qml ] && cp -a $LK/fallback/main.qml $LK/fallback/main.qml.droidpk-bak
     [ -e $LK/zh_CN/main.qml ] && cp -a $LK/zh_CN/main.qml $LK/zh_CN/main.qml.droidpk-bak
-    patch -p3 -d / -i $D/patches/plasma-keyboard-pc-entry-key.patch || \
+    patch -p1 -d / -i $D/patches/plasma-keyboard-pc-entry-key.patch || \
         echo "WARN: entry-key patch did not apply cleanly (plasma-keyboard version drift?)"
 fi
 if [ -n "${STYLES_DIR:-}" ] && ! grep -q piano-patch "$STYLES_DIR/style.qml" 2>/dev/null; then

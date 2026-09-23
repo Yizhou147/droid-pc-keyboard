@@ -23,8 +23,8 @@ echo "== 2) plasma-keyboard entry-key patch (adds the 'PC' toggle key) =="
 if grep -q "droid-pc-keyboard" $PK_LAYOUTS/fallback/main.qml 2>/dev/null; then
     echo "already applied, skip"
 else
-    patch -p3 --dry-run -d / -i patches/plasma-keyboard-pc-entry-key.patch &&
-    patch -p3 -d / -i patches/plasma-keyboard-pc-entry-key.patch
+    patch -p1 --dry-run -d / -i patches/plasma-keyboard-pc-entry-key.patch &&
+    patch -p1 -d / -i patches/plasma-keyboard-pc-entry-key.patch
 fi
 
 echo "== 3) Breeze style patch (functionKey labels -> 40px) =="
