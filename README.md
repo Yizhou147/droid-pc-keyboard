@@ -36,17 +36,18 @@ here is device-specific — any Plasma 6 desktop benefits.
 
 ## Install
 
-**From a .deb (recommended):** grab the latest artifacts from [GitHub Actions](../../actions/workflows/build-debs.yml)
-(or tagged releases):
+**From a .deb (recommended):** grab the latest artifact from [GitHub Actions](../../actions/workflows/build-debs.yml)
+(or a tagged release) — one all-in-one deb per architecture:
 
 ```
-sudo apt install ./droid-pc-keyboard_1.0.0_all.deb     # layout + patches + pc-keyd
-sudo apt install ./droid-vkb-pc_6.10.2pc1_arm64.deb    # patched Qt VirtualKeyboard (PC toggle + pinyin)
+sudo apt install ./droid-pc-keyboard_1.0.0_arm64.deb
 ```
 
-The runtime deb applies the layout/Breeze patches in `postinst` (backups kept,
-restored on removal). The VKB deb is version-pinned to Qt 6.10.2 and replaces
-Ubuntu's `libqt6virtualkeyboard6` / `qml6-module-qtquick-virtualkeyboard`.
+Contains: PC layout + entry-key/Breeze patches (applied in `postinst`,
+backups kept, restored on removal), the `pc-keyd` combo daemon, and a
+rebuilt Qt VirtualKeyboard 6.10.2 with the pcMode/F13 + latinOnly patches
+and the Pinyin plugin (replaces Ubuntu's `libqt6virtualkeyboard6` /
+`qml6-module-qtquick-virtualkeyboard`; version-pinned to Qt 6.10.2).
 
 **From source:**
 
@@ -59,16 +60,13 @@ then follow the printed steps for the two source builds
 
 ## CI
 
-`.github/workflows/build-debs.yml` builds all artifacts on every push/tag:
+`.github/workflows/build-debs.yml` builds, per arch (amd64 / arm64), one
+`droid-pc-keyboard_<ver>_<arch>.deb` artifact — Qt 6.10.2 fetched via
+aqtinstall, VKB cloned at `v6.10.2`, patched, built, merged with the
+runtime assets. Tags `vX.Y.Z` publish a GitHub release with all debs.
 
-| artifact | job | arch |
-|---|---|---|
-| `droid-pc-keyboard_*.deb` | runtime-deb | all |
-| `droid-vkb-pc_*_amd64.deb` | vkb-deb (Qt 6.10.2 via aqtinstall) | amd64 |
-| `droid-vkb-pc_*_arm64.deb` | vkb-deb | arm64 (GitHub arm runner) |
+Local build: `QT_PREFIX=$HOME/Qt/6.10.2/gcc_64 ./packaging/build-deb.sh`.
 
-Local builds: `./packaging/build-runtime-deb.sh`, and
-`QT_PREFIX=~/Qt/6.10.2/gcc_64 ./packaging/build-vkb-deb.sh`.
 
 
 ## Requirements
