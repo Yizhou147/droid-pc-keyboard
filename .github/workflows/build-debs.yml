@@ -1,0 +1,76 @@
+name: build-debs
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  runtime-deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve package version (tag must match vN.N.N, else snapshot)
+        run: |
+          if [ "${{ github.ref_type }}" = tag ] && echo "${GITHUB_REF_NAME}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=0.0.0-snapshot.$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
+          fi
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+      - name: Build runtime deb (layout + patches + pc-keyd)
+        run: |
+          chmod +x packaging/*.sh scripts/*.sh
+          ./packaging/build-runtime-deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: droid-pc-keyboard-deb
+          path: dist/*.deb
+
+  vkb-deb:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: amd64
+            qt_target: desktop
+            qt_arch: gcc_64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            qt_target: desktop
+            qt_arch: linux_gcc_arm64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build python3 patchelf libgl1-mesa-dev
+      - name: Install Qt 6.10.2 (aqtinstall)
+        run: |
+          python3 -m pip install --upgrade aqtinstall
+          aqt install-qt linux ${{ matrix.qt_target }} 6.10.2 ${{ matrix.qt_arch }} \
+            --outputdir "$HOME/Qt" --archives qtbase qtdeclarative qt5compat qttools qttranslations
+      - name: Build patched qtvirtualkeyboard deb
+        env:
+          QT_PREFIX: ${{ format('{0}/Qt/6.10.2/{1}', env.HOME, matrix.qt_arch) }}
+        run: ./packaging/build-vkb-deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: droid-vkb-pc-deb-${{ matrix.arch }}
+          path: dist/droid-vkb-pc_*.deb
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [runtime-deb, vkb-deb]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.deb

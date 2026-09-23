@@ -36,12 +36,40 @@ here is device-specific — any Plasma 6 desktop benefits.
 
 ## Install
 
+**From a .deb (recommended):** grab the latest artifacts from [GitHub Actions](../../actions/workflows/build-debs.yml)
+(or tagged releases):
+
+```
+sudo apt install ./droid-pc-keyboard_1.0.0_all.deb     # layout + patches + pc-keyd
+sudo apt install ./droid-vkb-pc_6.10.2pc1_arm64.deb    # patched Qt VirtualKeyboard (PC toggle + pinyin)
+```
+
+The runtime deb applies the layout/Breeze patches in `postinst` (backups kept,
+restored on removal). The VKB deb is version-pinned to Qt 6.10.2 and replaces
+Ubuntu's `libqt6virtualkeyboard6` / `qml6-module-qtquick-virtualkeyboard`.
+
+**From source:**
+
 ```
 sudo ./install.sh
 ```
 
 then follow the printed steps for the two source builds
 (qtvirtualkeyboard patch + pinyin plugin). Restart plasma-keyboard.
+
+## CI
+
+`.github/workflows/build-debs.yml` builds all artifacts on every push/tag:
+
+| artifact | job | arch |
+|---|---|---|
+| `droid-pc-keyboard_*.deb` | runtime-deb | all |
+| `droid-vkb-pc_*_amd64.deb` | vkb-deb (Qt 6.10.2 via aqtinstall) | amd64 |
+| `droid-vkb-pc_*_arm64.deb` | vkb-deb | arm64 (GitHub arm runner) |
+
+Local builds: `./packaging/build-runtime-deb.sh`, and
+`QT_PREFIX=~/Qt/6.10.2/gcc_64 ./packaging/build-vkb-deb.sh`.
+
 
 ## Requirements
 
