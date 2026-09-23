@@ -65,3 +65,6 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*.deb
+          # 永不自动公开：资产以 draft 挂出（draft 资产 URL 仍可下载用于实测），
+          # 人工验证后由维护者 gh release edit --draft=false 正式发布。
+          draft: true
