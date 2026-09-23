@@ -1,0 +1,41 @@
+diff --git a/src/components/Keyboard.qml b/src/components/Keyboard.qml
+index 5a9c828..4334c85 100644
+--- a/src/components/Keyboard.qml
++++ b/src/components/Keyboard.qml
+@@ -33,7 +33,7 @@ Item {
+     property string locale: localeIndex >= 0 && localeIndex < layoutsModel.count ? layoutsModel.get(localeIndex, "fileName") : ""
+     property string inputLocale
+     property int defaultLocaleIndex: -1
+-    readonly property bool latinOnly: InputContext.inputMethodHints & (Qt.ImhLatinOnly | Qt.ImhEmailCharactersOnly | Qt.ImhUrlCharactersOnly)
++    readonly property bool latinOnly: InputContext.inputMethodHints & Qt.ImhLatinOnly // piano-patch: URL/email hints must not disable CJK IME (Android parity)
+     readonly property bool preferNumbers: InputContext.inputMethodHints & Qt.ImhPreferNumbers
+     readonly property bool dialableCharactersOnly: InputContext.inputMethodHints & Qt.ImhDialableCharactersOnly
+     readonly property bool formattedNumbersOnly: InputContext.inputMethodHints & Qt.ImhFormattedNumbersOnly
+@@ -44,6 +44,7 @@ Item {
+         if (keyboard.dialableCharactersOnly) return "dialpad"
+         if (keyboard.formattedNumbersOnly) return "numbers"
+         if (keyboard.digitsOnly) return "digits"
++        if (keyboard.pcMode) return "pc"
+         if (keyboard.symbolMode) return "symbols"
+         return "main"
+     }
+@@ -51,6 +52,7 @@ Item {
+     property bool handwritingMode
+     property bool fullScreenHandwritingMode
+     property bool symbolMode
++    property bool pcMode
+     property bool fullScreenMode: VirtualKeyboardSettings.fullScreenMode
+     property var defaultInputMethod: initDefaultInputMethod()
+     property var plainInputMethod: PlainInputMethod {}
+@@ -460,6 +462,11 @@ Item {
+     Connections {
+         target: InputContext.inputEngine
+         function onVirtualKeyClicked(key, text, modifiers, isAutoRepeat) {
++            if (key === Qt.Key_F13) {
++                keyboard.pcMode = !keyboard.pcMode
++                keyboard.symbolMode = false
++                return
++            }
+             if (isAutoRepeat && keyboard.activeKey)
+                 soundEffect.play(keyboard.activeKey.soundEffect)
+             if (key !== Qt.Key_unknown && keyboardInputArea.dragSymbolMode) {

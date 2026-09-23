@@ -1,0 +1,11 @@
+--- a/style.qml
++++ b/style.qml
+@@ -135,7 +135,7 @@
+                 font {
+                     family: theme.fontFamily
+                     weight: Font.Light
+-                    pixelSize: 60 * scaleHint
++                    pixelSize: (control && control.functionKey) ? 40 * scaleHint : 60 * scaleHint  // piano-patch: functionKey 一律 40px 小字（含单字图标），字母键不受影响
+                     capitalization: control.uppercased ? Font.AllUppercase : Font.MixedCase
+                 }
+             }

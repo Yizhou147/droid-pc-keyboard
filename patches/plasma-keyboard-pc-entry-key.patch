@@ -1,0 +1,32 @@
+--- a/usr/share/plasma/keyboard/layouts/fallback/main.qml
++++ b/usr/share/plasma/keyboard/layouts/fallback/main.qml
+@@ -194,6 +194,13 @@
+             Layout.fillWidth: false
+         }
+         Key {
++            key: Qt.Key_F13
++            displayText: "PC"
++            functionKey: true
++            weight: normalKeyWidth
++            Layout.fillWidth: false
++        }
++        Key {
+             key: Qt.Key_Comma
+             weight: normalKeyWidth
+             Layout.fillWidth: false
+--- a/usr/share/plasma/keyboard/layouts/zh_CN/main.qml
++++ b/usr/share/plasma/keyboard/layouts/zh_CN/main.qml
+@@ -162,6 +162,13 @@
+             Layout.fillWidth: false
+         }
+         Key {
++            key: Qt.Key_F13
++            displayText: "PC"
++            functionKey: true
++            weight: normalKeyWidth
++            Layout.fillWidth: false
++        }
++        Key {
+             key: Qt.Key_Comma
+             weight: normalKeyWidth
+             Layout.fillWidth: false
