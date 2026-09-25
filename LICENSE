@@ -19,10 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-NOTE ON LICENSED MATERIALS: files under patches/ are derivative diffs of
-Qt VirtualKeyboard (GPL/LGPL) and KDE Breeze style (LGPL). Applying them
-yields works under those upstream licenses; the diffs themselves are
-published here under MIT for convenience and carry their upstream copyright
-headers where applicable. layout/fallback/pc.qml, pc-keyd.py, install.sh and
-the pinyin build script are original MIT work.

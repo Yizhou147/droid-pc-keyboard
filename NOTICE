@@ -1,0 +1,14 @@
+NOTE ON LICENSED MATERIALS
+=========================
+
+This project's LICENSE file is plain MIT so that automated license scanners
+recognize it correctly. License details that do not fit the MIT template are
+kept here.
+
+Files under patches/ are derivative diffs of Qt VirtualKeyboard (GPL/LGPL)
+and the KDE Breeze style (LGPL). Applying them yields works under those
+upstream licenses; the diffs themselves are published here under MIT for
+convenience and carry their upstream copyright headers where applicable.
+
+layout/fallback/pc.qml, pc-keyd.py, install.sh and the pinyin build script
+are original work licensed under MIT (see LICENSE).

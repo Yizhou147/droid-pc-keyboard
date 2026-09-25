@@ -101,4 +101,4 @@ Qt 6.10.2（不用 aqtinstall——Qt 6.10 改了架构命名且没有 arm64 桌
 | `packaging/build-deb.sh` | 一体化 deb 构建（CI 同款） |
 | `pc-keyd.service` | 仅供参考，**勿 enable**（见"要求"） |
 
-许可证：MIT（`LICENSE` 内含对上游 LGPL/GPL 补丁文件的说明）。
+许可证：MIT（`LICENSE` 为纯模板文本）；上游 LGPL/GPL 补丁文件的许可说明见 `NOTICE`。
