@@ -12,7 +12,7 @@ HTTP API 与 v1 完全兼容（pc.qml 零改动）：
 uinput 老路径仅在 XTEST 失败（无 X、anland 的 XTEST 失灵场景）时按请求懒创建兜底；
 单一实例：48222 端口占用即退出。禁止 systemd 自启（uinput 防滥用，§5.20）。
 """
-import os, subprocess
+import os, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -158,8 +158,8 @@ class H(BaseHTTPRequestHandler):
             self.send_response(204); self.end_headers(); return
         self.send_response(404); self.end_headers()
 
-    def log_message(self, *a):  # 静默访问日志
-        pass
+    def log_message(self, fmt, *a):  # 访问日志（排查 pc.qml 请求是否到达）
+        sys.stderr.write("req %s: %s\n" % (time.strftime("%H:%M:%S"), fmt % a))
 
 if __name__ == "__main__":
     # v2 默认不碰 /dev/uinput：主通道 XTEST 不需要节点，通知与防滥用红线随之消失；
