@@ -16,16 +16,21 @@
 
 ## 1. 注入通道候选与决策门（Phase 0）
 
-### 通道 B（快速试探）：XTEST / Xwayland
-- **既有实证**：09-26 音频物理音量键取证中，`xdotool key XF86AudioRaiseVolume` 在 DRM 轮内实测把
-  `droid_out` 从 40% 推到 49%——XTEST 事件**确实到达了 KWin 的全局快捷键层**（§7 物理音量键段）。
-- **未解问题**：XTEST 按键是否会送达**焦点所在的 Wayland 客户端**（konsole 等），还是只到 X11 侧。
-  这决定它能否承担 Ctrl+C/Ctrl+V 这类"进应用"的组合键。
+### 通道 B（快速试探）：XTEST / Xwayland —— 优先级回升（EIS 机理破案）
+- **09-26 音量实证的解释（kwin 源码找到）**：kwin 6.6 内置 `plugins/eis/`（libEI 服务端），
+  专门为 Xwayland 开了一条仿真输入通道：kwin 起 Xwayland 时创建
+  `$XDG_RUNTIME_DIR/kwin-xwayland-eis-socket.<pid>`（eiscontext.cpp:74-76，校验连接方 pid 必须是
+  Xwayland），Xwayland 的 XTEST 按键经此直进 kwin 输入管线；EIS 设备就是标准
+  `InputDevice`（eisdevice.cpp），按键送达**焦点所在窗口**（Wayland/X11 一视同仁）。
+  ⇒ 09-26 xdotool 动音量不是孤例，是 stock kwin 6.6 的正式机制。
+- **anland 内 XTEST 失灵的原因待查**（12:03 zenity+音量双探针均无效）：anland 的 Xwayland 由
+  补丁版 kwin 以 rootless 方式拉起（xwayland.patch），EIS 通道是否建立、或焦点归属差异，需在下
+  一轮 DRM 里实测——DRM 轮才是目标场景。
 - **决策门测试（下一轮 DRM，5 分钟，零风险）**：
   1. 轮内开 Wayland konsole，聚焦；
-  2. `setsid nohup xdotool key ctrl+c`（或先 `xdotool key a` 观察字符是否落入 konsole）；
-  3. 判据：字符/组合键出现在 Wayland konsole 中 = 通道 B 可用（进 Phase 1-B）；
-     仅触发全局快捷键而字符不进应用 = 通道 B 只能覆盖快捷键类组合 → 转通道 C。
+  2. `DISPLAY=:0 xdotool key a`（观察字符是否落入 konsole）；
+  3. 判据：字符出现 = 通道 B 可用（XTEST→EIS→kwin→焦点窗口全通，进 Phase 1-B）；
+     不出现 = EIS 通道在轮内也不通 → 转通道 C。
 - **实现成本**：pc-keyd v2 的 Backend 直接调 Xlib XTEST（或 shell 出 xdotool），半天工作量。
 
 ### 通道 C（治本主力）：anland 虚拟输入协议（kwin 补丁 input-only 化）
@@ -51,6 +56,10 @@
 - **成本**：kwin 重编一轮（rootfs 构建器已有 Debian13_v5 补丁管线可套）+ 守护改造 1-2 天。
 - **风险**：kwin 版本升级要跟着维护补丁；DRM 轮内 `InputMethod::commitText` 与 plasma-keyboard
   的 text-input 是否冲突需在实现时确认（组合键只走 key 路径，理论无冲突）。
+- **实现模板（源码已定位）**：EIS 插件就是范本——`eisdevice.cpp` 演示了不碰 Session/libinput、
+  直接实现并注册一个 `InputDevice`（input()->addInputDevice，input.cpp:3280）的完整路径；
+  input-only 补丁 = 照此结构做一个"unix socket 控制的虚拟键盘设备"（无 pid 校验、无 libei 依赖），
+  比改造 AnlandBackend 更小更独立。
 
 ### 通道 A（已排除记录）：EI/libei、zwlr_virtual_keyboard
 - 本机 kwin 6.6.6 全库 strings 零命中 `zwlr_virtual_keyboard`/`zwp_virtual_keyboard`——
