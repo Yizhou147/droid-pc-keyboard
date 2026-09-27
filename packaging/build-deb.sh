@@ -6,14 +6,14 @@
 # Usage: QT_PREFIX=$HOME/Qt/6.10.2/gcc_64 ./build-deb.sh [outdir]
 #   QT_PREFIX   Qt 6.10.2 install (aqt or system) — required
 #   BUILD_DIR   reusable clone/build dir        (default /tmp/vkb-build)
-#   VERSION     package version                 (default 1.0.0)
+#   VERSION     package version                 (default 1.1.0)
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
 REPO=$PWD
 OUT=${1:-$REPO/dist}
 QT_PREFIX=${QT_PREFIX:?QT_PREFIX must point to a Qt 6.10.2 install}
 VKB_TAG=v6.10.2
-VERSION=${VERSION:-1.0.0}
+VERSION=${VERSION:-1.1.0}
 ARCH=$(dpkg --print-architecture)
 BUILD=${BUILD_DIR:-/tmp/vkb-build}
 

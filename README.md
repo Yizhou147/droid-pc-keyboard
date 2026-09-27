@@ -24,10 +24,14 @@ Qt VirtualKeyboard 6.10）提供**全尺寸 PC 键盘布局 + 中文拼音 + 粘
   （`Qt.Key_F13` + 打过补丁的 `Keyboard.qml`）。
 - **粘滞 Ctrl / Alt / Shift**：点一下保持按下（键面淡色底 + 底部黑条点亮），下一个键消费并复位。
   按 ⇧ 时键帽**实时换字**（`1`→`!`、`q`→`Q`）。
-- **真实修饰键组合**：由 `pc-keyd` uinput 小守护注入 `Ctrl+C`、`Shift+Tab`、`Ctrl+←`、`Ctrl+1..9`
-  这类组合（input-method-v1 的 `send_key` 协议根本不带 modifiers，Wayland 下 uinput 是唯一可靠通道）。
-- **中文拼音输入**：Qt VirtualKeyboard 官方 Pinyin 插件（Ubuntu 构建把它砍掉了），自带 fcitx
-  引擎与词库；外加 `latinOnly` 补丁，Chrome 地址栏等 URL/邮箱输入域不再杀中文。
+- **真实修饰键组合（pc-keyd v2）**：`Ctrl+C`、`Shift+Tab`、`Ctrl+←`、`Ctrl+1..9` 这类组合由
+  `pc-keyd` 守护注入（input-method-v1 的 `send_key` 协议不带 modifiers）。v2 按焦点窗口类型
+  自动选通道：**kwin 虚拟键盘设备（通道 C，配合 kwin 补丁，Wayland/X11 应用通吃）→
+  XTEST（仅 X11/XWayland 应用）→ uinput（兜底）**。
+- **中文拼音输入**：Qt VirtualKeyboard 官方 Pinyin 插件（Ubuntu 构建把它砍掉了，内嵌 fcitx 系
+  拼音引擎与词库）；外加 `latinOnly` 补丁，Chrome 地址栏等 URL/邮箱输入域不再杀中文。
+  注意：组词在 VKB 内完成，候选文本经 input-method 协议提交——**对 X11/XWayland 应用需要
+  配合 kwin 补丁投递**（见下节）。
 
 ## 安装
 
@@ -35,7 +39,7 @@ Qt VirtualKeyboard 6.10）提供**全尺寸 PC 键盘布局 + 中文拼音 + 粘
 （或 Release）下载对应架构的一个全包：
 
 ```
-sudo apt install ./droid-pc-keyboard_1.0.0_arm64.deb
+sudo apt install ./droid-pc-keyboard_1.1.0_arm64.deb
 ```
 
 一包内含：PC 布局、入口键/Breeze 补丁（postinst 应用、自动备份、卸载还原）、pc-keyd 守护，
@@ -53,6 +57,26 @@ sudo apt install ./droid-pc-keyboard_1.0.0_arm64.deb
 sudo apt install --reinstall plasma-desktop plasma-workspace plasma-keyboard \
     libqt6virtualkeyboard6 qml6-module-qtquick-virtualkeyboard qt6-virtualkeyboard-plugin
 ```
+
+## DRM 接管（kwin_wayland 直驱）下的使用
+
+在 kwin 直接驱动的接管会话（无 logind/无 text-input 的 X11 应用等）里，本项目的完整体验需要
+kwin 侧两个小补丁（补丁文件在 [patches/](patches/)，云构建见
+[droidspaces-package](https://github.com/Yizhou147/droidspaces-package) 的
+`anland-kde-packages` 滚动发布，装法 `install-anland-kde.sh`）：
+
+1. **VKB 原生弹出**：`KWIN_IM_SHOW_ALWAYS=1`（kwin 官方开关，inputmethod.cpp 的
+   `shouldShowOnActive`）——每次窗口激活（含 X11/XWayland 应用，它们没有 text-input 协议）
+   kwin 都走原生路径弹出虚拟键盘。
+2. **组合键投递（通道 C）**：kwin 内建 `pkeyd` 虚拟键盘设备，监听
+   `$XDG_RUNTIME_DIR/pckeyd-input.sock`，pc-keyd v2 检测到该 socket 后经 anland 输入协议
+   （`data_msg{102,12}+InputEvent`）直驱按键——不经过 uinput/udev/logind，Wayland 与 X11
+   焦点窗口通吃。任一环节不可用时自动回落 XTEST → uinput。
+
+X11 应用（Electron 系：ZCode/Trae/星火商店等）的**中文**推荐走 fcitx5：PC 页按
+`Ctrl+Space` 切 fcitx5 到拼音，直接打字母，在 **fcitx5 自己的候选窗**里选词
+（应用的 `XMODIFIERS`/`GTK_IM_MODULE=fcitx5` 已就位时零配置）。不要与安卓输入法的
+候选条混用——两套组词状态机会互相错位。
 
 ## 案例：为什么虚拟键盘"只在 Chrome 弹出"
 

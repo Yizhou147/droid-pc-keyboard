@@ -19,6 +19,17 @@ here is device-specific — any Plasma 6 desktop benefits.
 └───────────────────────────────────────┘
 ```
 
+## Usage under DRM takeover (kwin_wayland direct-drive)
+
+Full experience in kwin-direct sessions (incl. X11/XWayland apps, which lack the
+text-input protocol) needs two small kwin patches — IM popup on window activation
+(`KWIN_IM_SHOW_ALWAYS=1`) and the `pkeyd` virtual keyboard device fed by pc-keyd v2
+over a unix socket. Patch files: [patches/](patches/); prebuilt kwin packages:
+[droidspaces-package releases](https://github.com/Yizhou147/droidspaces-package/releases/tag/anland-kde-packages)
+(wired automatically by droid-drm-takeover's desk-takeover). Chinese for X11 apps:
+switch fcitx5 to Pinyin (Ctrl+Space) and type on the PC layout — pick candidates in
+fcitx5's own popup.
+
 ## What you get
 
 - **Full-size PC layout** (6 rows: function keys, number row, nav cluster,

@@ -1,168 +1,226 @@
 #!/usr/bin/env python3
-"""pc-keyd — uinput 组合键注入守护（plasma-keyboard PC 布局的 Ctrl/Alt 组合通道）。
+"""pc-keyd v2 — 组合键注入守护（XTEST/EIS 主通道 + uinput 按需兜底）。
 
-背景：input-method-v1 的 send_key 协议不带 modifiers，VKB 的 sendKeyClick 修饰键
-会被 qtwayland 丢弃；唯一可靠通道是 /dev/uinput 注入真实按键。
-用法：GET http://127.0.0.1:48222/combo?key=67&mods=ctrl,alt   （key=Qt::Key 码）
-      GET /ping -> pong
-无需 root（/dev/uinput 由接管脚本建好并 666）。单实例：端口占用即退出。
+v2（09-27）：DRM 轮内 uinput 设备进不了 kwin 的 logind 设备交接层（工作总结 §40/§41），
+而 Xwayland 的 XTEST 按键经 kwin 内置 EIS 插件直进 compositor 输入管线、送达焦点窗口
+（决策门实测：zenity 收到 xdotool 注入的 HELLO，含 shift 大写）。故主通道=XTEST，
+**不再默认创建 uinput 设备**——安卓"物理键盘"通知与 uinput 防滥用红线一并消失。
+
+HTTP API 与 v1 完全兼容（pc.qml 零改动）：
+  GET /combo?key=<Qt::Key 整数>&mods=ctrl,alt,shift,meta
+  GET /unstick   GET /ping
+uinput 老路径仅在 XTEST 失败（无 X、anland 的 XTEST 失灵场景）时按请求懒创建兜底；
+单一实例：48222 端口占用即退出。禁止 systemd 自启（uinput 防滥用，§5.20）。
 """
-import ctypes, fcntl, os, struct, sys
+import os, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
-UINPUT_FD = os.open("/dev/uinput", os.O_WRONLY)
+PORT = 48222
+UINPUT_FD = None
+PKSOCK_PATH = os.environ.get("PCKEYD_INPUT_SOCKET", "/run/user/1000/pckeyd-input.sock")
+PKSOCK = None  # anland 协议生产者 socket（连 kwin 的 pkeyd 虚拟键盘设备）
 EV_SYN, EV_KEY = 0, 1
-UI_SET_EVBIT, UI_SET_KEYBIT, UI_DEV_CREATE, UI_DEV_DESTROY = 0x40045564, 0x40045565, 0x5501, 0x5502
-# struct uinput_user_dev: name[80] u32 bustype vendor product version u16 id[80] effect[32]
-def _open_kb():
-    fcntl.ioctl(UINPUT_FD, UI_SET_EVBIT, EV_KEY)
-    for code in range(0x2ff + 1):
-        fcntl.ioctl(UINPUT_FD, UI_SET_KEYBIT, code)
-    # 09-23 教训：①原名 plasma-keyboard-pc 已作废；②开机时 crash-loop 在 24s 内反复
-    # 拉起（虽未建成设备，但加上白天调试期十几次设备建删风暴）把小米内核的 uinput
-    # 注入防滥用打满 —— 本启动会话内所有后续注入被静默丢弃（write 仍返回 24，evdev
-    # 0 包），冷却或重启恢复。因此：设备名换新；服务禁止 systemd 自启（防开机风暴）；
-    # 调试时严禁反复重启守护进程/反复建删 uinput 设备，一次起、一次验。
-    name = b"pc-keyd-kbd"
-    data = name.ljust(80, b"\0") + struct.pack("HHHHI", 0x11, 0x01, 0x01, 0x01, 0) + bytes(4 * 64 * 4)  # ABS_CNT=64 (sizeof(uinput_user_dev)=1116, measured)
-    os.write(UINPUT_FD, data)
-    fcntl.ioctl(UINPUT_FD, UI_DEV_CREATE)
+UI_SET_EVBIT, UI_SET_KEYBIT, UI_DEV_CREATE = 0x40045564, 0x40045565, 0x5501
 
-def _ev(t, code, value):
-    os.write(UINPUT_FD, struct.pack("llHHi", 0, 0, t, code, value))
+def _xdisplay():
+    """DRM 轮的 Xwayland 显示号由 desk-takeover 写入 /run/pc-keyd-display，缺省 :0。"""
+    try:
+        with open("/run/pc-keyd-display") as f:
+            d = f.read().strip()
+            if d:
+                return d
+    except OSError:
+        pass
+    return ":0"
 
-# Qt::Key -> evdev keycode
+# ---- XTEST 主通道 -----------------------------------------------------------
+
+# Qt::Key -> X keysym 名（xdotool 直接接受）
+MODNAME = {"ctrl": "ctrl", "shift": "shift", "alt": "alt", "meta": "super"}
+QTFUNC_KS = {
+    0x01000000: "Escape", 0x01000001: "Tab", 0x01000002: "Tab", 0x01000003: "BackSpace",
+    0x01000004: "Return", 0x01000005: "Return", 0x01000006: "Insert", 0x01000007: "Delete",
+    0x01000010: "Home", 0x01000011: "End", 0x01000012: "Left", 0x01000013: "Up",
+    0x01000014: "Right", 0x01000015: "Down", 0x01000016: "Prior", 0x01000017: "Next",
+    0x01000055: "Menu",
+}
+for _i in range(12):
+    QTFUNC_KS[0x01000030 + _i] = "F%d" % (_i + 1)
+
+def qt_to_keysym(key):
+    k = int(key)
+    if k in QTFUNC_KS: return QTFUNC_KS[k]
+    if 0x41 <= k <= 0x5A or 0x61 <= k <= 0x7A or 0x30 <= k <= 0x39: return chr(k).lower()
+    table = {0x20: "space", 0x2D: "minus", 0x3D: "equal", 0x5B: "bracketleft",
+             0x5D: "bracketright", 0x5C: "backslash", 0x3B: "semicolon", 0x27: "apostrophe",
+             0x2C: "comma", 0x2E: "period", 0x2F: "slash", 0x60: "grave"}
+    return table.get(k)
+
+def xtest_combo(keysym, mods):
+    seq = [MODNAME[m] for m in mods] + [keysym]
+    env = dict(os.environ, DISPLAY=_xdisplay())
+    subprocess.run(["xdotool", "key", "--", "+".join(seq)],
+                   env=env, timeout=10, check=True)
+
+def xtest_unstick():
+    env = dict(os.environ, DISPLAY=_xdisplay())
+    subprocess.run(["xdotool", "keyup", "ctrl", "alt", "shift", "meta"],
+                   env=env, timeout=10, check=False)
+
+# ---- 通道 C 生产者：anland 协议帧直驱 kwin 虚拟键盘设备 ----------------------
+# 帧格式（离线三方验证 PASS）：data_msg{102,12} + InputEvent{2,{action,evdev码}}
+# 目标：kwin 内 pkeyd 虚拟键盘设备（PCKEYD_INPUT_SOCKET，desk-takeover 注入）。
+# 连接失败/断开 → 自动回落 XTEST/uinput。Wayland 与 X11 焦点窗口通吃。
+
+def _pksock_connect():
+    global PKSOCK
+    if PKSOCK is not None:
+        return PKSOCK
+    if not os.path.exists(PKSOCK_PATH):
+        return None
+    import socket
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.connect(PKSOCK_PATH)
+        PKSOCK = s
+        return s
+    except OSError:
+        try:
+            s.close()
+        except Exception:
+            pass
+        return None
+
+def _pksock_send_key(evdev_code, action):
+    import struct as _s
+    s = _pksock_connect()
+    if s is None:
+        return False
+    try:
+        s.sendall(_s.pack("<II", 102, 12) + _s.pack("<Iii", 2, action, evdev_code))
+        return True
+    except OSError:
+        global PKSOCK
+        PKSOCK = None
+        return False
+
+def pksock_combo(key_int, mods):
+    """通道 C：Ctrl/Alt/Meta 走修饰键帧，字母等走普通键帧。任一帧失败即整体回落。"""
+    code = QTFUNC_EV.get(key_int) or qt_to_evdev(key_int)
+    if code is None:
+        return False
+    for m in mods:
+        if not _pksock_send_key(MODMAP[m], 0):
+            return False
+    if not _pksock_send_key(code, 0):
+        return False
+    if not _pksock_send_key(code, 1):
+        return False
+    for m in reversed(mods):
+        if not _pksock_send_key(MODMAP[m], 1):
+            return False
+    return True
+
+# ---- uinput 兜底（v1 逻辑原样保留，懒初始化） --------------------------------
+
+import fcntl, struct
+
+def _uinput_fd():
+    global UINPUT_FD
+    if UINPUT_FD is None:
+        UINPUT_FD = os.open("/dev/uinput", os.O_WRONLY)
+        fcntl.ioctl(UINPUT_FD, UI_SET_EVBIT, EV_KEY)
+        for code in range(0x2ff + 1):
+            fcntl.ioctl(UINPUT_FD, UI_SET_KEYBIT, code)
+        # 设备名沿用 v1；v2 主路径不再建设备，防滥用风暴风险随调用频率自然消失
+        data = b"pc-keyd-kbd".ljust(80, b"\0") + \
+            struct.pack("HHHHI", 0x11, 0x01, 0x01, 0x01, 0) + bytes(4 * 64 * 4)
+        os.write(UINPUT_FD, data)
+        fcntl.ioctl(UINPUT_FD, 0x5501)  # UI_DEV_CREATE
+    return UINPUT_FD
+
 MODMAP = {"ctrl": 29, "shift": 42, "alt": 56, "meta": 125}
+QTFUNC_EV = {
+    0x01000000: 1, 0x01000001: 15, 0x01000002: 15, 0x01000003: 14, 0x01000004: 28,
+    0x01000005: 28, 0x01000006: 110, 0x01000007: 111, 0x01000010: 102, 0x01000011: 107,
+    0x01000012: 105, 0x01000013: 103, 0x01000014: 106, 0x01000015: 108, 0x01000016: 104,
+    0x01000017: 109, 0x01000055: 139,
+}
+for _i in range(10):
+    QTFUNC_EV[0x01000030 + _i] = 59 + _i
+QTFUNC_EV[0x0100003A] = 87
+QTFUNC_EV[0x0100003B] = 88
+
 def qt_to_evdev(key):
     k = int(key)
-    if 0x41 <= k <= 0x5A: return k - 0x41 + 30          # A-Z
-    if 0x61 <= k <= 0x7A: return k - 0x61 + 30          # a-z
-    if 0x30 <= k <= 0x39: return k - 0x30 + 2 if k > 0x30 else 11  # 1..9,0
-    table = {0x20:57, 0x2D:12, 0x3D:13, 0x5B:26, 0x5D:27, 0x5C:43, 0x3B:39,
-             0x27:40, 0x2C:51, 0x2E:52, 0x2F:53, 0x60:41, 0x09:15, 0x0D:28,
-             0x1B:1, 0x08:14}
+    if 0x41 <= k <= 0x5A: return k - 0x41 + 30
+    if 0x61 <= k <= 0x7A: return k - 0x61 + 30
+    if 0x30 <= k <= 0x39: return k - 0x30 + 2 if k > 0x30 else 11
+    table = {0x20: 57, 0x2D: 12, 0x3D: 13, 0x5B: 26, 0x5D: 27, 0x5C: 43, 0x3B: 39,
+             0x27: 40, 0x2C: 51, 0x2E: 52, 0x2F: 53, 0x60: 41, 0x09: 15, 0x0D: 28,
+             0x1B: 1, 0x08: 14}
     return table.get(k)
-# Qt 功能键区（值对照 /usr/include/qt6/QtCore/qnamespace.h + linux input-event-codes.h，
-# 09-23 修正：旧表 Return/方向键/Ins/Del 全是错的，F 键整个缺失——部分组合键失灵根因之一）
-QTFUNC = {
-    0x01000000: 1,    # Escape  -> KEY_ESC
-    0x01000001: 15,   # Tab     -> KEY_TAB
-    0x01000002: 15,   # Backtab -> KEY_TAB (shift 由 mods 参数带)
-    0x01000003: 14,   # Backspace
-    0x01000004: 28,   # Return
-    0x01000005: 28,   # Enter
-    0x01000006: 110,  # Insert
-    0x01000007: 111,  # Delete
-    0x01000010: 102,  # Home
-    0x01000011: 107,  # End
-    0x01000012: 105,  # Left
-    0x01000013: 103,  # Up
-    0x01000014: 106,  # Right
-    0x01000015: 108,  # Down
-    0x01000016: 104,  # PageUp
-    0x01000017: 109,  # PageDown
-    0x01000030: 59, 0x01000031: 60, 0x01000032: 61, 0x01000033: 62,
-    0x01000034: 63, 0x01000035: 64, 0x01000036: 65, 0x01000037: 66,
-    0x01000038: 67, 0x01000039: 68, 0x0100003A: 87, 0x0100003B: 88,
-    0x01000055: 139,  # Menu
-}
 
-def resolve(key):
-    k = int(key)
-    if k in QTFUNC: return QTFUNC[k]
-    return qt_to_evdev(k)
+def _ev(t, code, value):
+    os.write(_uinput_fd(), struct.pack("llHHi", 0, 0, t, code, value))
+
+def uinput_combo(key_int, mods):
+    code = QTFUNC_EV.get(key_int) or qt_to_evdev(key_int)
+    if code is None: return False
+    try:
+        for m in mods: _ev(EV_KEY, MODMAP[m], 1); _ev(EV_SYN, 0, 0)
+        _ev(EV_KEY, code, 1); _ev(EV_SYN, 0, 0)
+        _ev(EV_KEY, code, 0); _ev(EV_SYN, 0, 0)
+    finally:
+        for m in reversed(mods):
+            try: _ev(EV_KEY, MODMAP[m], 0); _ev(EV_SYN, 0, 0)
+            except OSError: pass
+    return True
+
+def uinput_unstick():
+    try:
+        for c in (29, 42, 56, 125, 100, 97, 105):
+            _ev(EV_KEY, c, 0); _ev(EV_SYN, 0, 0)
+    except OSError:
+        pass
+
+# ---- HTTP 服务（API 与 v1 兼容） ---------------------------------------------
 
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
         if u.path == "/unstick":
-            for c in (29, 42, 56, 125, 100, 97, 105):
-                _ev(EV_KEY, c, 0); _ev(EV_SYN, 0, 0)
+            try: xtest_unstick()
+            except Exception: uinput_unstick()
             self.send_response(204); self.end_headers(); return
         if u.path == "/ping":
             self.send_response(204); self.end_headers(); return
         if u.path == "/combo":
             q = parse_qs(u.query)
-            code = resolve(q["key"][0]) if "key" in q else None
-            mods = [m for m in q.get("mods", [""])[0].split(",") if m in MODMAP]
-            if code is not None:
-                try:
-                    for m in mods: _ev(EV_KEY, MODMAP[m], 1); _ev(EV_SYN, 0, 0)
-                    _ev(EV_KEY, code, 1); _ev(EV_SYN, 0, 0)
-                    _ev(EV_KEY, code, 0); _ev(EV_SYN, 0, 0)
-                finally:
-                    # 抬起必须无条件执行，否则内核里留下卡住的修饰键（09-23 实锤）
-                    for m in reversed(mods):
-                        try: _ev(EV_KEY, MODMAP[m], 0); _ev(EV_SYN, 0, 0)
-                        except OSError: pass
-            if u.path == "/unstick":
-                pass
+            mods = [m for m in q.get("mods", [""])[0].split(",") if m in MODNAME]
+            if "key" in q:
+                key_int = int(q["key"][0])
+                # 通道优先级：C（kwin 虚拟设备，Wayland+X11 通吃）→ XTEST（仅 X11）→ uinput 兜底
+                if not pksock_combo(key_int, mods):
+                    keysym = qt_to_keysym(key_int)
+                    done = False
+                    if keysym:
+                        try:
+                            xtest_combo(keysym, mods)
+                            done = True
+                        except Exception:
+                            done = False
+                    if not done:
+                        uinput_combo(key_int, mods)
             self.send_response(204); self.end_headers(); return
         self.send_response(404); self.end_headers()
-    def log_message(self, *a): pass
 
-def _expose_devnode():
-    """容器里没有 udevd：手动补 /dev/input/eventNN 节点 + udev 数据库记录，
-    否则 kwin(libinput) 看不见这个虚拟键盘（09-23 DRM 侧实锤）。"""
-    import re, time
-    time.sleep(0.3)
-    try:
-        txt = open("/proc/bus/input/devices").read()
-        m = re.search(r'Name="pc-keyd-kbd".*?Handlers=event(\d+)', txt, re.S)
-        if not m: return
-        ev = "event" + m.group(1)
-        dev = open("/sys/class/input/%s/dev" % ev).read().strip()  # "13:80"
-        minor = int(dev.split(":")[1])
-        node = "/dev/input/" + ev
-        if not os.path.exists(node):
-            # mknod 的 mode 会被进程 umask 削掉（systemd 默认 022 → 0644，
-            # kwin 以 xieyizhou 身份 open 直接 EACCES），必须显式 chmod 兜底
-            os.mknod(node, 0o666 | 0o020000, os.makedev(13, minor))
-        os.chmod(node, 0o666)
-        # 09-27 DRM 轮实锤：手写 H: 格式数据文件会**覆盖 udevd 刚写好的正规条目**，
-        # libudev 解析不出 seat 标签（TAGS 只剩 ":100:"）→ libinput 枚举按 seat 标签
-        # 过滤直接跳过 → kwin 永远收不到这个键盘（组合键失效的根因）。
-        # udevd 活着时必须让 udevd 自己写正规条目（99-drm-input-seat.rules 会打
-        # seat/uaccess 标签）；手写只作 udevd 不在时的兜底。
-        wrote_udev = False
-        if os.path.exists("/run/udev/control"):
-            import subprocess
-            try:
-                subprocess.run(["udevadm", "trigger", "--action=add",
-                                "--sysname-match=" + ev],
-                               timeout=10, check=True)
-                wrote_udev = True
-            except Exception:
-                wrote_udev = False
-        if not wrote_udev:
-            data = "/run/udev/data/c13:%d" % minor
-            with open(data, "w") as f:
-                f.write("Q:100\n"
-                        "E:DEVPATH=/devices/virtual/input/%s\n"
-                        "E:MAJOR=13\nE:MINOR=%d\nE:SUBSYSTEM=input\n"
-                        "E:DEVNAME=input/%s\nE:ID_INPUT=1\nE:ID_INPUT_KEY=1\n"
-                        "E:ID_INPUT_KEYBOARD=1\nE:LIBINPUT_DEVICE_GROUP=11/1/1:pc-keyd-kbd\n"
-                        "H:uaccess\nH:seat\n" % (ev, minor, ev))
-        # 09-27: udevd 写条目是异步的——kwin 枚举若早于条目落盘会永久错过该设备
-        # （轮内热插拔监听不生效，§40 第二层）。轮询等 seat 标签就位，最多 10s；
-        # 超时（含 udevd 缺席走手写兜底的情形）照常返回，不阻塞守护。
-        for _ in range(20):
-            try:
-                if "G:seat" in open("/run/udev/data/c13:%d" % minor).read():
-                    sys.stderr.write("udev db ready (G:seat)\n")
-                    break
-            except OSError:
-                pass
-            time.sleep(0.5)
-        sys.stderr.write("exposed %s c13:%d%s\n"
-                         % (node, minor, " (udevd)" if wrote_udev else ""))
-    except OSError as e:
-        sys.stderr.write("expose failed (need root?): %s\n" % e)
+    def log_message(self, fmt, *a):  # 访问日志（排查 pc.qml 请求是否到达）
+        sys.stderr.write("req %s: %s\n" % (time.strftime("%H:%M:%S"), fmt % a))
 
 if __name__ == "__main__":
-    _open_kb()
-    _expose_devnode()
-    srv = HTTPServer(("127.0.0.1", 48222), H)
-    sys.stderr.write("pc-keyd up\n"); sys.stderr.flush()
-    srv.serve_forever()
+    # v2 默认不碰 /dev/uinput：主通道 XTEST 不需要节点，通知与防滥用红线随之消失；
+    # 兜底路径在首个失败请求时才懒创建。
+    print("pc-keyd v2 up (xtest primary, uinput lazy fallback) on port %d" % PORT, flush=True)
+    HTTPServer(("127.0.0.1", PORT), H).serve_forever()
