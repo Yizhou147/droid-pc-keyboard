@@ -144,6 +144,17 @@ def _expose_devnode():
                         "E:DEVNAME=input/%s\nE:ID_INPUT=1\nE:ID_INPUT_KEY=1\n"
                         "E:ID_INPUT_KEYBOARD=1\nE:LIBINPUT_DEVICE_GROUP=11/1/1:pc-keyd-kbd\n"
                         "H:uaccess\nH:seat\n" % (ev, minor, ev))
+        # 09-27: udevd 写条目是异步的——kwin 枚举若早于条目落盘会永久错过该设备
+        # （轮内热插拔监听不生效，§40 第二层）。轮询等 seat 标签就位，最多 10s；
+        # 超时（含 udevd 缺席走手写兜底的情形）照常返回，不阻塞守护。
+        for _ in range(20):
+            try:
+                if "G:seat" in open("/run/udev/data/c13:%d" % minor).read():
+                    sys.stderr.write("udev db ready (G:seat)\n")
+                    break
+            except OSError:
+                pass
+            time.sleep(0.5)
         sys.stderr.write("exposed %s c13:%d%s\n"
                          % (node, minor, " (udevd)" if wrote_udev else ""))
     except OSError as e:
