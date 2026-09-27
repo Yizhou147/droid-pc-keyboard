@@ -18,6 +18,8 @@ from urllib.parse import urlparse, parse_qs
 
 PORT = 48222
 UINPUT_FD = None
+PKSOCK_PATH = os.environ.get("PCKEYD_INPUT_SOCKET", "/run/user/1000/pckeyd-input.sock")
+PKSOCK = None  # anland 协议生产者 socket（连 kwin 的 pkeyd 虚拟键盘设备）
 EV_SYN, EV_KEY = 0, 1
 UI_SET_EVBIT, UI_SET_KEYBIT, UI_DEV_CREATE = 0x40045564, 0x40045565, 0x5501
 
@@ -65,6 +67,60 @@ def xtest_unstick():
     env = dict(os.environ, DISPLAY=_xdisplay())
     subprocess.run(["xdotool", "keyup", "ctrl", "alt", "shift", "meta"],
                    env=env, timeout=10, check=False)
+
+# ---- 通道 C 生产者：anland 协议帧直驱 kwin 虚拟键盘设备 ----------------------
+# 帧格式（离线三方验证 PASS）：data_msg{102,12} + InputEvent{2,{action,evdev码}}
+# 目标：kwin 内 pkeyd 虚拟键盘设备（PCKEYD_INPUT_SOCKET，desk-takeover 注入）。
+# 连接失败/断开 → 自动回落 XTEST/uinput。Wayland 与 X11 焦点窗口通吃。
+
+def _pksock_connect():
+    global PKSOCK
+    if PKSOCK is not None:
+        return PKSOCK
+    if not os.path.exists(PKSOCK_PATH):
+        return None
+    import socket
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.connect(PKSOCK_PATH)
+        PKSOCK = s
+        return s
+    except OSError:
+        try:
+            s.close()
+        except Exception:
+            pass
+        return None
+
+def _pksock_send_key(evdev_code, action):
+    import struct as _s
+    s = _pksock_connect()
+    if s is None:
+        return False
+    try:
+        s.sendall(_s.pack("<II", 102, 12) + _s.pack("<Iii", 2, action, evdev_code))
+        return True
+    except OSError:
+        global PKSOCK
+        PKSOCK = None
+        return False
+
+def pksock_combo(key_int, mods):
+    """通道 C：Ctrl/Alt/Meta 走修饰键帧，字母等走普通键帧。任一帧失败即整体回落。"""
+    code = QTFUNC_EV.get(key_int) or qt_to_evdev(key_int)
+    if code is None:
+        return False
+    for m in mods:
+        if not _pksock_send_key(MODMAP[m], 0):
+            return False
+    if not _pksock_send_key(code, 0):
+        return False
+    if not _pksock_send_key(code, 1):
+        return False
+    for m in reversed(mods):
+        if not _pksock_send_key(MODMAP[m], 1):
+            return False
+    return True
 
 # ---- uinput 兜底（v1 逻辑原样保留，懒初始化） --------------------------------
 
@@ -145,16 +201,18 @@ class H(BaseHTTPRequestHandler):
             mods = [m for m in q.get("mods", [""])[0].split(",") if m in MODNAME]
             if "key" in q:
                 key_int = int(q["key"][0])
-                keysym = qt_to_keysym(key_int)
-                sent = False
-                if keysym:
-                    try:
-                        xtest_combo(keysym, mods)
-                        sent = True
-                    except Exception:
-                        sent = False
-                if not sent:  # XTEST 不可用（无 X / anland 失灵）→ uinput 兜底
-                    uinput_combo(key_int, mods)
+                # 通道优先级：C（kwin 虚拟设备，Wayland+X11 通吃）→ XTEST（仅 X11）→ uinput 兜底
+                if not pksock_combo(key_int, mods):
+                    keysym = qt_to_keysym(key_int)
+                    done = False
+                    if keysym:
+                        try:
+                            xtest_combo(keysym, mods)
+                            done = True
+                        except Exception:
+                            done = False
+                    if not done:
+                        uinput_combo(key_int, mods)
             self.send_response(204); self.end_headers(); return
         self.send_response(404); self.end_headers()
 

@@ -1,0 +1,23 @@
+diff --git a/src/inputmethod.cpp b/src/inputmethod.cpp
+index ae5392c..310c8b2 100644
+--- a/src/inputmethod.cpp
++++ b/src/inputmethod.cpp
+@@ -12,6 +12,7 @@
+ 
+ #include "effect/effecthandler.h"
+ #include "input.h"
++#include "pkeydinput.h"
+ #include "input_event.h"
+ #include "inputpanelv1window.h"
+ #include "keyboard_input.h"
+@@ -114,6 +115,10 @@ void InputMethod::init()
+     new VirtualKeyboardDBus(this);
+     qCDebug(KWIN_VIRTUALKEYBOARD) << "Registering the DBus interface";
+ 
++    // 09-27 pc-keyd v2 通道 C：虚拟键盘设备直连（绕过 udev/logind，Wayland+X11 焦点窗口通吃）。
++    // 仅当 PCKEYD_INPUT_SOCKET 存在时启用（desk-takeover 注入）；anland kwin 无此变量，不生效。
++    PkeydIntegration::create(this);
++
+     new TextInputManagerV1Interface(waylandServer()->display(), this);
+     new TextInputManagerV2Interface(waylandServer()->display(), this);
+     new TextInputManagerV3Interface(waylandServer()->display(), this);
