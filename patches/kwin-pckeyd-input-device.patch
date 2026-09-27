@@ -1,3 +1,16 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 5429e7e..2c03fe6 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -99,6 +99,8 @@ target_sources(kwin PRIVATE
+     input_event.cpp
+     input_event_spy.cpp
+     inputmethod.cpp
++    pkeydinput.cpp
++    pkeydinput.h
+     inputpanelv1integration.cpp
+     inputpanelv1window.cpp
+     internalinputmethodcontext.cpp
 diff --git a/src/inputmethod.cpp b/src/inputmethod.cpp
 index ae5392c..310c8b2 100644
 --- a/src/inputmethod.cpp
@@ -21,3 +34,334 @@ index ae5392c..310c8b2 100644
      new TextInputManagerV1Interface(waylandServer()->display(), this);
      new TextInputManagerV2Interface(waylandServer()->display(), this);
      new TextInputManagerV3Interface(waylandServer()->display(), this);
+diff --git a/src/pkeydinput.cpp b/src/pkeydinput.cpp
+new file mode 100644
+index 0000000..2d83e58
+--- /dev/null
++++ b/src/pkeydinput.cpp
+@@ -0,0 +1,243 @@
++/*
++    KWin - the KDE window manager. pc-keyd extension (GPL-2.0-or-later).
++
++    实现见 pkeydinput.h 头注释。帧解析与 pc-keyd 仓库 test/pk2_injector.c 的
++    注入格式逐字节一致（已在离线三方验证中确认）。
++*/
++#include "pkeydinput.h"
++
++#include "input.h"
++
++#include <cerrno>
++#include <chrono>
++#include <cstdio>
++#include <cstring>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <unistd.h>
++
++#include <QSocketNotifier>
++
++namespace KWin
++{
++
++namespace
++{
++
++std::chrono::microseconds now()
++{
++    return std::chrono::duration_cast<std::chrono::microseconds>(
++        std::chrono::steady_clock::now().time_since_epoch());
++}
++
++constexpr uint32_t FRAME_DATA_MSG_INPUT_EVENT = 102;
++constexpr uint32_t INPUT_TYPE_KEY = 2;
++
++void pklog(const char *fmt, ...)
++{
++    va_list ap;
++    va_start(ap, fmt);
++    fprintf(stderr, "pc-keyd: ");
++    vfprintf(stderr, fmt, ap);
++    va_end(ap);
++    fputc('\n', stderr);
++}
++
++} // namespace
++
++PkeydDevice::PkeydDevice(QObject *parent)
++    : InputDevice(parent)
++{
++}
++
++QString PkeydDevice::name() const
++{
++    return QStringLiteral("pkeyd virtual keyboard");
++}
++
++bool PkeydDevice::isEnabled() const
++{
++    return m_enabled;
++}
++
++void PkeydDevice::setEnabled(bool enabled)
++{
++    m_enabled = enabled;
++}
++
++LEDs PkeydDevice::leds() const
++{
++    return LEDs();
++}
++
++void PkeydDevice::setLeds(LEDs leds)
++{
++}
++
++bool PkeydDevice::isKeyboard() const
++{
++    return true;
++}
++
++bool PkeydDevice::isPointer() const
++{
++    return false;
++}
++
++bool PkeydDevice::isTouchpad() const
++{
++    return false;
++}
++
++bool PkeydDevice::isTouch() const
++{
++    return false;
++}
++
++bool PkeydDevice::isTabletTool() const
++{
++    return false;
++}
++
++bool PkeydDevice::isTabletPad() const
++{
++    return false;
++}
++
++bool PkeydDevice::isTabletModeSwitch() const
++{
++    return false;
++}
++
++bool PkeydDevice::isLidSwitch() const
++{
++    return false;
++}
++
++void PkeydDevice::keyboardKey(quint32 keycode, bool pressed)
++{
++    Q_EMIT keyChanged(keycode,
++                      pressed ? KeyboardKeyState::Pressed : KeyboardKeyState::Released,
++                      now(), this);
++}
++
++PkeydIntegration::PkeydIntegration(const QString &socketPath, QObject *parent)
++    : QObject(parent)
++    , m_path(socketPath)
++{
++    setupListener();
++}
++
++void PkeydIntegration::create(QObject *parent)
++{
++    const QString path = qEnvironmentVariable("PCKEYD_INPUT_SOCKET");
++    if (path.isEmpty()) {
++        return;
++    }
++    pklog("creating input socket %s", path.toUtf8().constData());
++    new PkeydIntegration(path, parent);
++}
++
++void PkeydIntegration::setupListener()
++{
++    m_listenFd = socket(AF_UNIX, SOCK_STREAM, 0);
++    if (m_listenFd < 0) {
++        pklog("socket() failed: %s", strerror(errno));
++        return;
++    }
++    struct sockaddr_un addr;
++    memset(&addr, 0, sizeof(addr));
++    addr.sun_family = AF_UNIX;
++    const QByteArray pathBytes = m_path.toUtf8();
++    strncpy(addr.sun_path, pathBytes.constData(), sizeof(addr.sun_path) - 1);
++    ::unlink(addr.sun_path);
++    if (bind(m_listenFd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
++        pklog("bind failed: %s", strerror(errno));
++        return;
++    }
++    if (listen(m_listenFd, 2) < 0) {
++        pklog("listen failed: %s", strerror(errno));
++        return;
++    }
++    m_listenNotifier = new QSocketNotifier(m_listenFd, QSocketNotifier::Read, this);
++    connect(m_listenNotifier, &QSocketNotifier::activated, this, [this] {
++        handleConnection();
++    });
++    pklog("listening on %s", m_path.toUtf8().constData());
++}
++
++void PkeydIntegration::handleConnection()
++{
++    int fd = accept(m_listenFd, nullptr, nullptr);
++    if (fd < 0) {
++        return;
++    }
++    if (m_clientFd >= 0) {
++        ::close(m_clientFd); // 单客户端：新连接挤掉旧连接
++    }
++    m_clientFd = fd;
++    m_pending.clear();
++    if (!m_device) {
++        m_device = new PkeydDevice(this);
++        input()->addInputDevice(m_device);
++    }
++    if (!m_clientNotifier) {
++        m_clientNotifier = new QSocketNotifier(m_clientFd, QSocketNotifier::Read, this);
++        connect(m_clientNotifier, &QSocketNotifier::activated, this, [this] {
++            handleClientReadable();
++        });
++    } else {
++        m_clientNotifier->setSocket(m_clientFd);
++        m_clientNotifier->setEnabled(true);
++    }
++    pklog("client connected, virtual keyboard registered");
++}
++
++void PkeydIntegration::handleClientReadable()
++{
++    uint8_t buf[512];
++    while (true) {
++        ssize_t n = recv(m_clientFd, buf, sizeof(buf), MSG_DONTWAIT);
++        if (n <= 0) {
++            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
++                return;
++            }
++            if (m_device) {
++                input()->removeInputDevice(m_device);
++                m_device->deleteLater();
++                m_device = nullptr;
++            }
++            if (m_clientNotifier) {
++                m_clientNotifier->setEnabled(false);
++            }
++            ::close(m_clientFd);
++            m_clientFd = -1;
++            pklog("client disconnected, device unregistered");
++            return;
++        }
++        m_pending.append(reinterpret_cast<const char *>(buf), n);
++        // 处理所有完整帧；不足一帧的尾巴留在 m_pending
++        while (m_pending.size() >= 8) {
++            uint32_t type = 0, length = 0;
++            memcpy(&type, m_pending.constData(), 4);
++            memcpy(&length, m_pending.constData() + 4, 4);
++            if (length > 4096 || m_pending.size() < 8 + length) {
++                break; // 半包或异常长度，等更多数据
++            }
++            const char *payload = m_pending.constData() + 8;
++            if (type == FRAME_DATA_MSG_INPUT_EVENT && length == 12) {
++                uint32_t evType = 0;
++                int32_t action = 0, keycode = 0;
++                memcpy(&evType, payload, 4);
++                memcpy(&action, payload + 4, 4);
++                memcpy(&keycode, payload + 8, 4);
++                if (evType == INPUT_TYPE_KEY && m_device) {
++                    m_device->keyboardKey(quint32(keycode), action == 0);
++                }
++            }
++            m_pending.remove(0, 8 + int(length));
++        }
++    }
++}
++
++} // namespace KWin
+diff --git a/src/pkeydinput.h b/src/pkeydinput.h
+new file mode 100644
+index 0000000..9595d81
+--- /dev/null
++++ b/src/pkeydinput.h
+@@ -0,0 +1,76 @@
++/*
++    KWin - the KDE window manager. pc-keyd extension (GPL-2.0-or-later).
++
++    pkeydinput — pc-keyd v2 的 kwin 内置虚拟键盘设备。
++    监听 unix socket（PCKEYD_INPUT_SOCKET，默认 /run/user/1000/pckeyd-input.sock），
++    接收 pc-keyd v2 的注入帧并作为标准 InputDevice 投递到焦点窗口。
++
++    帧格式（与 anland display_daemon 的 InputEvent 帧一致，已离线验证）：
++      data_msg { u32 type=102(DATA_MSG_INPUT_EVENT); u32 size=12 }
++      InputEvent { u32 type=2(INPUT_TYPE_KEY); i32 action(0=down,1=up); i32 keycode(evdev) }
++    全部 packed，小端。
++
++    作用域：仅在 PCKEYD_INPUT_SOCKET 环境变量存在时启用（desk-takeover 注入），
++    anland 会话的 kwin 无此变量 → 完全不生效。
++*/
++#pragma once
++
++#include "core/inputdevice.h"
++
++#include <QSocketNotifier>
++
++namespace KWin
++{
++
++class PkeydDevice : public InputDevice
++{
++    Q_OBJECT
++
++public:
++    explicit PkeydDevice(QObject *parent = nullptr);
++
++    QString name() const override;
++    bool isEnabled() const override;
++    void setEnabled(bool enabled) override;
++    LEDs leds() const override;
++    void setLeds(LEDs leds) override;
++
++    bool isKeyboard() const override;
++    bool isPointer() const override;
++    bool isTouchpad() const override;
++    bool isTouch() const override;
++    bool isTabletTool() const override;
++    bool isTabletPad() const override;
++    bool isTabletModeSwitch() const override;
++    bool isLidSwitch() const override;
++
++    void keyboardKey(quint32 keycode, bool pressed);
++
++private:
++    bool m_enabled = true;
++};
++
++class PkeydIntegration : public QObject
++{
++    Q_OBJECT
++
++public:
++    static void create(QObject *parent); // env-gated
++
++private:
++    explicit PkeydIntegration(const QString &socketPath, QObject *parent);
++    void setupListener();
++    void handleConnection();
++    void handleClientReadable();
++    void handleFrame(const uint8_t *payload, uint32_t size);
++
++    QString m_path;
++    int m_listenFd = -1;
++    int m_clientFd = -1;
++    QSocketNotifier *m_listenNotifier = nullptr;
++    QSocketNotifier *m_clientNotifier = nullptr;
++    PkeydDevice *m_device = nullptr;
++    QByteArray m_pending; // 半包缓冲
++};
++
++} // namespace KWin
