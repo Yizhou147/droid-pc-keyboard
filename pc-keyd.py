@@ -120,15 +120,32 @@ def _expose_devnode():
             # kwin 以 xieyizhou 身份 open 直接 EACCES），必须显式 chmod 兜底
             os.mknod(node, 0o666 | 0o020000, os.makedev(13, minor))
         os.chmod(node, 0o666)
-        data = "/run/udev/data/c13:%d" % minor
-        with open(data, "w") as f:
-            f.write("Q:100\n"
-                    "E:DEVPATH=/devices/virtual/input/%s\n"
-                    "E:MAJOR=13\nE:MINOR=%d\nE:SUBSYSTEM=input\n"
-                    "E:DEVNAME=input/%s\nE:ID_INPUT=1\nE:ID_INPUT_KEY=1\n"
-                    "E:ID_INPUT_KEYBOARD=1\nE:LIBINPUT_DEVICE_GROUP=11/1/1:pc-keyd-kbd\n"
-                    "H:uaccess\nH:seat\n" % (ev, minor, ev))
-        sys.stderr.write("exposed %s c13:%d\n" % (node, minor))
+        # 09-27 DRM 轮实锤：手写 H: 格式数据文件会**覆盖 udevd 刚写好的正规条目**，
+        # libudev 解析不出 seat 标签（TAGS 只剩 ":100:"）→ libinput 枚举按 seat 标签
+        # 过滤直接跳过 → kwin 永远收不到这个键盘（组合键失效的根因）。
+        # udevd 活着时必须让 udevd 自己写正规条目（99-drm-input-seat.rules 会打
+        # seat/uaccess 标签）；手写只作 udevd 不在时的兜底。
+        wrote_udev = False
+        if os.path.exists("/run/udev/control"):
+            import subprocess
+            try:
+                subprocess.run(["udevadm", "trigger", "--action=add",
+                                "--sysname-match=" + ev],
+                               timeout=10, check=True)
+                wrote_udev = True
+            except Exception:
+                wrote_udev = False
+        if not wrote_udev:
+            data = "/run/udev/data/c13:%d" % minor
+            with open(data, "w") as f:
+                f.write("Q:100\n"
+                        "E:DEVPATH=/devices/virtual/input/%s\n"
+                        "E:MAJOR=13\nE:MINOR=%d\nE:SUBSYSTEM=input\n"
+                        "E:DEVNAME=input/%s\nE:ID_INPUT=1\nE:ID_INPUT_KEY=1\n"
+                        "E:ID_INPUT_KEYBOARD=1\nE:LIBINPUT_DEVICE_GROUP=11/1/1:pc-keyd-kbd\n"
+                        "H:uaccess\nH:seat\n" % (ev, minor, ev))
+        sys.stderr.write("exposed %s c13:%d%s\n"
+                         % (node, minor, " (udevd)" if wrote_udev else ""))
     except OSError as e:
         sys.stderr.write("expose failed (need root?): %s\n" % e)
 
