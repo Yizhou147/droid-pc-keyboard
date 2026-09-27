@@ -1,0 +1,62 @@
+diff --git a/src/inputmethod.cpp b/src/inputmethod.cpp
+index 4ce5459..596c70f 100644
+--- a/src/inputmethod.cpp
++++ b/src/inputmethod.cpp
+@@ -20,6 +20,7 @@
+ #include "wayland_server.h"
+ #include "window.h"
+ #include "workspace.h"
++#include "x11window.h"
+ #if KWIN_BUILD_SCREENLOCKER
+ #include <KScreenLocker/KsldApp>
+ #endif
+@@ -121,6 +122,15 @@ void InputMethod::init()
+     connect(waylandServer()->seat(), &SeatInterface::focusedKeyboardSurfaceAboutToChange, this, &InputMethod::commitPendingText);
+     connect(waylandServer()->seat(), &SeatInterface::focusedTextInputSurfaceChanged, this, &InputMethod::handleFocusedSurfaceChanged);
+ 
++    // 09-27 pc-keyd: DRM 轮（KWIN_IM_SHOW_ALWAYS=1，由 desk-takeover 注入）下，
++    // X11(Xwayland) 窗口没有 text-input 协议，focusedTextInputSurfaceChanged 永不触发，
++    // VKB 对 X11 应用永不弹出。挂窗口激活信号：X11 窗口激活时视为可输入，
++    // 走原生 setActive/show 路径。anland 的 kwin 不带该 env，此分支不生效。
++    if (qEnvironmentVariableIntValue("KWIN_IM_SHOW_ALWAYS") != 0) {
++        connect(workspace(), &Workspace::windowActivated, this,
++                &InputMethod::slotWindowActivatedShowAlways, Qt::UniqueConnection);
++    }
++
+     TextInputV1Interface *textInputV1 = waylandServer()->seat()->textInputV1();
+     connect(textInputV1, &TextInputV1Interface::requestShowInputPanel, this, &InputMethod::show);
+     connect(textInputV1, &TextInputV1Interface::requestHideInputPanel, this, &InputMethod::hide);
+@@ -379,6 +389,21 @@ void InputMethod::handleFocusedSurfaceChanged()
+     refreshActive();
+ }
+ 
++// 09-27 pc-keyd: 见 init() 注释。X11 窗口激活 → 原生 setActive/show；其余窗口走原生刷新。
++void InputMethod::slotWindowActivatedShowAlways(Window *window)
++{
++    if (!m_enabled) {
++        return;
++    }
++    if (qobject_cast<X11Window *>(window)) {
++        setTrackedWindow(window);
++        setActive(true);
++        show();
++    } else {
++        refreshActive();
++    }
++}
++
+ void InputMethod::surroundingTextChanged()
+ {
+     auto t2 = waylandServer()->seat()->textInputV2();
+diff --git a/src/inputmethod.h b/src/inputmethod.h
+index f0df33d..35738e1 100644
+--- a/src/inputmethod.h
++++ b/src/inputmethod.h
+@@ -123,6 +123,7 @@ private:
+     void startInputMethod();
+     void stopInputMethod();
+     void setTrackedWindow(Window *trackedWindow);
++    void slotWindowActivatedShowAlways(Window *window);
+     void installKeyboardGrab(InputMethodGrabV1 *keyboardGrab);
+     void updateModifiersMap(const QByteArray &modifiers);
+ 
