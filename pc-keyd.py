@@ -105,6 +105,15 @@ def _pksock_send_key(evdev_code, action):
         PKSOCK = None
         return False
 
+def fcitx_toggle():
+    """Ctrl+Space 特判:DBus 直达 fcitx5 引擎开关(09-29 实测:通道 C 的键被座位
+    QtVK 吞掉,X11 窗口的 XIM 收不到 Ctrl+Space;XTEST 可达但依赖焦点窗口)。
+    pc-keyd 与守护同会话总线(轮内/anland 均可达)。rc: 0=守护不在→回落按键路径。"""
+    try:
+        return subprocess.call(["fcitx5-remote", "-T"]) in (1, 2)
+    except OSError:
+        return False
+
 def pksock_combo(key_int, mods):
     """通道 C：Ctrl/Alt/Meta 走修饰键帧，字母等走普通键帧。任一帧失败即整体回落。"""
     code = QTFUNC_EV.get(key_int) or qt_to_evdev(key_int)
@@ -201,6 +210,9 @@ class H(BaseHTTPRequestHandler):
             mods = [m for m in q.get("mods", [""])[0].split(",") if m in MODNAME]
             if "key" in q:
                 key_int = int(q["key"][0])
+                # Ctrl+Space=切换输入法:直达 fcitx5(见 fcitx_toggle 注释),不经任何注入通道
+                if key_int == 0x20 and mods == ["ctrl"] and fcitx_toggle():
+                    self.send_response(204); self.end_headers(); return
                 # 通道优先级：C（kwin 虚拟设备，Wayland+X11 通吃）→ XTEST（仅 X11）→ uinput 兜底
                 if not pksock_combo(key_int, mods):
                     keysym = qt_to_keysym(key_int)
