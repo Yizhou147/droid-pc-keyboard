@@ -77,6 +77,9 @@ X11 应用（Electron 系：ZCode/Trae/星火商店等）的**中文**推荐走 
 `Ctrl+Space` 切 fcitx5 到拼音，直接打字母，在 **fcitx5 自己的候选窗**里选词
 （应用的 `XMODIFIERS`/`GTK_IM_MODULE=fcitx5` 已就位时零配置）。不要与安卓输入法的
 候选条混用——两套组词状态机会互相错位。
+`Ctrl+Space` 在 pc-keyd 里是**特判直达**：直接执行 `fcitx5-remote -T`（DBus），
+不走通道 C/XTEST 注入——09-29 实测 Wayland 轮里座位 QtVK 会吞掉发往 X11 窗口的
+Ctrl+Space，注入路径到不了 fcitx5；守护不存在（rc=0）时才回落普通按键路径。
 
 ## 案例：为什么虚拟键盘"只在 Chrome 弹出"
 

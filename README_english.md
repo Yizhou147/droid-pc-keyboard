@@ -28,7 +28,11 @@ over a unix socket. Patch files: [patches/](patches/); prebuilt kwin packages:
 [droidspaces-package releases](https://github.com/Yizhou147/droidspaces-package/releases/tag/anland-kde-packages)
 (wired automatically by droid-drm-takeover's desk-takeover). Chinese for X11 apps:
 switch fcitx5 to Pinyin (Ctrl+Space) and type on the PC layout — pick candidates in
-fcitx5's own popup.
+fcitx5's own popup. Ctrl+Space is special-cased inside pc-keyd: it runs
+`fcitx5-remote -T` straight over DBus instead of any key-injection channel —
+measured 09-29: with plasma-keyboard holding the compositor seat, its QtVK layer
+swallows Ctrl+Space before X11 windows (and thus fcitx5's XIM) ever see it. Only
+when no fcitx5 daemon answers does the combo fall back to the regular path.
 
 ## What you get
 
@@ -38,10 +42,11 @@ fcitx5's own popup.
 - **Sticky Ctrl / Alt / Shift** — tap a modifier, it stays lit (dim wash +
   black underline), the next key consumes it. Keycaps live-update under
   Shift (`1`→`!`, `q`→`Q`).
-- **Real modifier combos** via `pc-keyd`, a tiny uinput daemon:
+- **Real modifier combos** via `pc-keyd`, a tiny daemon (channel C → XTEST →
+  lazy uinput fallback):
   `Ctrl+C`, `Ctrl+Alt+Del`-style chords, `Shift+Tab`, `Ctrl+←` word-nav,
   `Ctrl+1..9` tab switching… (input-method-v1 `send_key` carries *no*
-  modifiers — uinput is the only reliable path on Wayland.)
+  modifiers — injection is the only reliable path on Wayland.)
 - **Chinese pinyin input** — Qt VirtualKeyboard's official Pinyin plugin
   (Ubuntu builds ship without it), self-contained fcitx engine + dictionary,
   plus a `latinOnly` patch so URL/email fields no longer kill CJK input

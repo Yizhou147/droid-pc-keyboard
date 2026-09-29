@@ -6,14 +6,14 @@
 # Usage: QT_PREFIX=$HOME/Qt/6.10.2/gcc_64 ./build-deb.sh [outdir]
 #   QT_PREFIX   Qt 6.10.2 install (aqt or system) — required
 #   BUILD_DIR   reusable clone/build dir        (default /tmp/vkb-build)
-#   VERSION     package version                 (default 1.1.0)
+#   VERSION     package version                 (default 1.1.1)
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
 REPO=$PWD
 OUT=${1:-$REPO/dist}
 QT_PREFIX=${QT_PREFIX:?QT_PREFIX must point to a Qt 6.10.2 install}
 VKB_TAG=v6.10.2
-VERSION=${VERSION:-1.1.0}
+VERSION=${VERSION:-1.1.1}
 ARCH=$(dpkg --print-architecture)
 BUILD=${BUILD_DIR:-/tmp/vkb-build}
 
@@ -68,12 +68,13 @@ Package: droid-pc-keyboard
 Version: $VERSION
 Architecture: $ARCH
 Maintainer: Yizhou <yizhou@example.invalid>
-Depends: patch
+Depends: patch, python3
 Provides: libqt6virtualkeyboard6, qml6-module-qtquick-virtualkeyboard, qt6-virtualkeyboard-plugin
 Replaces: libqt6virtualkeyboard6, qml6-module-qtquick-virtualkeyboard, qt6-virtualkeyboard-plugin
-Description: Full-size PC layout, pinyin and uinput combo keys for plasma-keyboard
+Description: Full-size PC layout, pinyin, combo keys and fcitx5 toggle for plasma-keyboard
  All-in-one: 6-row PC keyboard page with sticky Ctrl/Alt/Shift and real
- modifier chords via the pc-keyd uinput daemon, Chinese pinyin (Qt VKB
+ modifier chords via the pc-keyd v2 daemon (channel C/XTEST, uinput lazy
+ fallback; Ctrl+Space toggles fcitx5 via DBus directly), Chinese pinyin (Qt VKB
  Pinyin plugin with bundled fcitx engine), and a rebuilt Qt VirtualKeyboard
  6.10.2 carrying the pcMode/F13 and latinOnly patches. Layout/Breeze patches
  are applied in postinst (backups kept, restored on purge). VKB parts are

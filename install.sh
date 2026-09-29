@@ -36,10 +36,11 @@ else
     patch -p1 -d "$(dirname "$BREEZE")" -i patches/breeze-keytext-functionkey-40px.patch
 fi
 
-echo "== 4) pc-keyd combo daemon (uinput) =="
+echo "== 4) pc-keyd v2 combo daemon (channel C/XTEST, lazy uinput) =="
 install -m755 pc-keyd.py /usr/local/bin/pc-keyd.py
 echo "start it from your session/takeover script (NO systemd unit; on Android"
-echo "kernels systemd-context uinput injection can be silently dropped):"
+echo "kernels uinput injection made from systemd context can be silently dropped,"
+echo "and v2 only creates uinput devices on demand anyway):"
 echo "  nohup python3 /usr/local/bin/pc-keyd.py > /tmp/pc-keyd.log 2>&1 &"
 echo "layout talks to it over http://127.0.0.1:48222/combo?key=<QtKey>&mods=..."
 echo "NOTE: /dev/input nodes created by python obey umask -> pc-keyd.py chmods"
