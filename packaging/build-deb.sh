@@ -6,14 +6,14 @@
 # Usage: QT_PREFIX=$HOME/Qt/6.10.2/gcc_64 ./build-deb.sh [outdir]
 #   QT_PREFIX   Qt 6.10.2 install (aqt or system) — required
 #   BUILD_DIR   reusable clone/build dir        (default /tmp/vkb-build)
-#   VERSION     package version                 (default 1.1.1)
+#   VERSION     package version                 (default 1.1.2)
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
 REPO=$PWD
 OUT=${1:-$REPO/dist}
 QT_PREFIX=${QT_PREFIX:?QT_PREFIX must point to a Qt 6.10.2 install}
 VKB_TAG=v6.10.2
-VERSION=${VERSION:-1.1.1}
+VERSION=${VERSION:-1.1.2}
 ARCH=$(dpkg --print-architecture)
 BUILD=${BUILD_DIR:-/tmp/vkb-build}
 
@@ -68,7 +68,7 @@ Package: droid-pc-keyboard
 Version: $VERSION
 Architecture: $ARCH
 Maintainer: Yizhou <yizhou@example.invalid>
-Depends: patch, python3
+Depends: patch, python3, plasma-keyboard
 Provides: libqt6virtualkeyboard6, qml6-module-qtquick-virtualkeyboard, qt6-virtualkeyboard-plugin
 Replaces: libqt6virtualkeyboard6, qml6-module-qtquick-virtualkeyboard, qt6-virtualkeyboard-plugin
 Description: Full-size PC layout, pinyin, combo keys and fcitx5 toggle for plasma-keyboard
@@ -101,16 +101,26 @@ for _loc in $LK/*/; do
     [ -e "$_loc/pc.fallback" ] || : > "$_loc/pc.fallback"
 done
 
-if ! grep -q "Qt.Key_F13" $LK/fallback/main.qml 2>/dev/null; then
-    [ -e $LK/fallback/main.qml ] && cp -a $LK/fallback/main.qml $LK/fallback/main.qml.droidpk-bak
-    [ -e $LK/zh_CN/main.qml ] && cp -a $LK/zh_CN/main.qml $LK/zh_CN/main.qml.droidpk-bak
-    patch -p1 -d / -i $D/patches/plasma-keyboard-pc-entry-key.patch || \
-        echo "WARN: entry-key patch did not apply cleanly (plasma-keyboard version drift?)"
+# ---- 打补丁：必须**永不提问**，否则 apt 的 postinst 会永久卡住 ----
+# 10-02 实测：缺目标文件时 `patch` 会停在 `File to patch:` 等输入，而 dpkg 的 postinst
+# 是非交互跑的 ⇒ 安装挂死、dpkg 进入半配置（之后任何 apt install 都被
+# "dpkg was interrupted" 挡下，看起来像"deb 装不上"）。两条措施：
+#   · `--batch`  —— 找不到文件/有冲突也绝不提问；
+#   · `--forward` —— 已打过就跳过，不反问 "Reversed (or previously applied) patch detected?"；
+#   · 守卫用"**目标文件存在 且 还没打过**"，文件不在就明确跳过并提示（不静默、也不阻塞）。
+if [ -e "$LK/fallback/main.qml" ] && ! grep -q "Qt.Key_F13" "$LK/fallback/main.qml" 2>/dev/null; then
+    cp -a "$LK/fallback/main.qml" "$LK/fallback/main.qml.droidpk-bak"
+    [ -e "$LK/zh_CN/main.qml" ] && cp -a "$LK/zh_CN/main.qml" "$LK/zh_CN/main.qml.droidpk-bak"
+    patch --batch --forward -p1 -d / -i $D/patches/plasma-keyboard-pc-entry-key.patch || \
+        echo "WARN: entry-key patch 未能应用（plasma-keyboard 版本不符？）——已跳过，不影响安装"
+elif [ ! -e "$LK/fallback/main.qml" ]; then
+    echo "WARN: 找不到 $LK/fallback/main.qml（plasma-keyboard 似乎没装）⇒ 跳过 PC 入口键补丁；"
+    echo "      装上 plasma-keyboard 后重装本 deb 即可补上（本 deb 的 Depends 已包含它）。"
 fi
-if [ -n "${STYLES_DIR:-}" ] && ! grep -q piano-patch "$STYLES_DIR/style.qml" 2>/dev/null; then
+if [ -n "${STYLES_DIR:-}" ] && [ -e "$STYLES_DIR/style.qml" ] && ! grep -q piano-patch "$STYLES_DIR/style.qml" 2>/dev/null; then
     cp -a "$STYLES_DIR/style.qml" "$STYLES_DIR/style.qml.droidpk-bak"
-    patch -p1 -d "$STYLES_DIR" -i $D/patches/breeze-keytext-functionkey-40px.patch || \
-        echo "WARN: breeze patch did not apply cleanly (style version drift?)"
+    patch --batch --forward -p1 -d "$STYLES_DIR" -i $D/patches/breeze-keytext-functionkey-40px.patch || \
+        echo "WARN: breeze patch 未能应用（样式版本不符？）——已跳过，不影响安装"
 fi
 
 # pc-keyd is NOT autostarted on purpose: some Android kernels drop uinput

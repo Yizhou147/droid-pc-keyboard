@@ -27,20 +27,26 @@ for _loc in $PK_LAYOUTS/*/; do
 done
 
 echo "== 2) plasma-keyboard entry-key patch (adds the 'PC' toggle key) =="
-if grep -q "droid-pc-keyboard" $PK_LAYOUTS/fallback/main.qml 2>/dev/null; then
-    echo "already applied, skip"
+# `--batch --forward`：绝不提问（缺文件/已打过都只跳过），否则在非交互环境会停在
+# `File to patch:` 上永久挂住（10-02 实测，与 deb postinst 同一处问题）。
+if [ ! -e "$PK_LAYOUTS/fallback/main.qml" ]; then
+    echo "   跳过：找不到 $PK_LAYOUTS/fallback/main.qml（先装 plasma-keyboard）"
+elif grep -q "Qt.Key_F13" "$PK_LAYOUTS/fallback/main.qml" 2>/dev/null; then
+    echo "   已打过，跳过"
 else
-    patch -p1 --dry-run -d / -i patches/plasma-keyboard-pc-entry-key.patch &&
-    patch -p1 -d / -i patches/plasma-keyboard-pc-entry-key.patch
+    patch -p1 --batch --forward -d / -i patches/plasma-keyboard-pc-entry-key.patch \
+        || echo "WARN: entry-key patch 未应用（版本不符），已跳过"
 fi
 
 echo "== 3) Breeze style patch (functionKey labels -> 40px) =="
-if grep -q "piano-patch" "$BREEZE" 2>/dev/null; then
-    echo "already applied, skip"
+if [ ! -e "$BREEZE" ]; then
+    echo "   跳过：找不到 $BREEZE（qtvirtualkeyboard 的 Breeze 样式不在）"
+elif grep -q "piano-patch" "$BREEZE" 2>/dev/null; then
+    echo "   已打过，跳过"
 else
     bak "$BREEZE"
-    patch -p1 --dry-run -d "$(dirname "$BREEZE")" -i patches/breeze-keytext-functionkey-40px.patch &&
-    patch -p1 -d "$(dirname "$BREEZE")" -i patches/breeze-keytext-functionkey-40px.patch
+    patch -p1 --batch --forward -d "$(dirname "$BREEZE")" -i patches/breeze-keytext-functionkey-40px.patch \
+        || echo "WARN: breeze patch 未应用（版本不符），已跳过"
 fi
 
 echo "== 4) pc-keyd v2 combo daemon (channel C/XTEST, lazy uinput) =="
