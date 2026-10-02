@@ -18,6 +18,13 @@ bak() { [ -e "$1" ] && [ ! -e "$1.droidpk-bak" ] && cp -a "$1" "$1.droidpk-bak" 
 
 echo "== 1) PC layout file =="
 install -D -m644 layout/fallback/pc.qml $PK_LAYOUTS/fallback/pc.qml
+# VKB 靠 locale 目录里的 0 字节 `<name>.fallback` 标记解析布局名 "pc" ⇒ 到 fallback/pc.qml。
+# 不建标记：按 PC 键毫无反应（10-02 实测）。deb 的 postinst 里也有同一段。
+for _loc in $PK_LAYOUTS/*/; do
+    [ -d "$_loc" ] || continue
+    [ -e "$_loc/main.fallback" ] || [ -e "$_loc/main.qml" ] || continue
+    [ -e "$_loc/pc.fallback" ] || : > "$_loc/pc.fallback"
+done
 
 echo "== 2) plasma-keyboard entry-key patch (adds the 'PC' toggle key) =="
 if grep -q "droid-pc-keyboard" $PK_LAYOUTS/fallback/main.qml 2>/dev/null; then

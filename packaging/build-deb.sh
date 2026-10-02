@@ -90,6 +90,17 @@ STYLES_DIR=$(ls -d /usr/lib/*/qt6/qml/QtQuick/VirtualKeyboard/Styles/Breeze 2>/d
 
 install -D -m644 $D/layout/fallback/pc.qml $LK/fallback/pc.qml
 
+# VKB 用 locale 目录里的 **0 字节 `<name>.fallback` 标记**把布局名 "pc" 解析到 fallback/pc.qml
+# （en_US/main.fallback 等同理，是 plasma-keyboard 自带的那种标记）。
+# 缺了 pc.fallback ⇒ 按下 PC 键时 layout() 返回 "pc" 也加载不出布局 = **按键毫无反应**
+# （10-02 测试容器实测：装了 deb 但没这两个标记，PC 页死活出不来）。
+# 这是安装期必须做的事，install.sh 与 postinst 两处都要有。
+for _loc in $LK/*/; do
+    [ -d "$_loc" ] || continue
+    [ -e "$_loc/main.fallback" ] || [ -e "$_loc/main.qml" ] || continue
+    [ -e "$_loc/pc.fallback" ] || : > "$_loc/pc.fallback"
+done
+
 if ! grep -q "Qt.Key_F13" $LK/fallback/main.qml 2>/dev/null; then
     [ -e $LK/fallback/main.qml ] && cp -a $LK/fallback/main.qml $LK/fallback/main.qml.droidpk-bak
     [ -e $LK/zh_CN/main.qml ] && cp -a $LK/zh_CN/main.qml $LK/zh_CN/main.qml.droidpk-bak
@@ -118,6 +129,9 @@ done
 STYLES_DIR=$(ls -d /usr/lib/*/qt6/qml/QtQuick/VirtualKeyboard/Styles/Breeze 2>/dev/null | head -1)
 [ -n "${STYLES_DIR:-}" ] && [ -e "$STYLES_DIR/style.qml.droidpk-bak" ] && mv -f "$STYLES_DIR/style.qml.droidpk-bak" "$STYLES_DIR/style.qml"
 rm -f $LK/fallback/pc.qml
+for _loc in $LK/*/; do
+    rm -f "$_loc/pc.fallback"
+done
 EOF
 
 chmod 755 "$PKG/DEBIAN/postinst" "$PKG/DEBIAN/prerm"
